@@ -1,0 +1,12 @@
+apiVersion: ci.cleoverse.net/v1alpha1
+kind: ForgejoRunner
+metadata:
+  labels:
+    app.kubernetes.io/name: forgejo-runner-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: forgejorunner-sample
+  namespace: ci-runner
+spec:
+  image: data.forgejo.org/forgejo/runner:13
+  configSecretRef:
+    name: forgejo-runner-config
