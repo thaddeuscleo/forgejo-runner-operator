@@ -40,6 +40,10 @@ import (
 	civ1alpha1 "codeberg.org/thaddeuscleo/forgejo-runner-operator/api/v1alpha1"
 )
 
+const (
+	CONFIG_VOLUME_NAME = "config"
+)
+
 // ForgejoRunnerReconciler reconciles a ForgejoRunner object
 type ForgejoRunnerReconciler struct {
 	client.Client
@@ -159,7 +163,7 @@ func (r *ForgejoRunnerReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			foundVolume := false
 			for i := range deployment.Spec.Template.Spec.Volumes {
 				volume := &deployment.Spec.Template.Spec.Volumes[i]
-				if volume.Name == "config" && volume.Secret != nil {
+				if volume.Name == CONFIG_VOLUME_NAME && volume.Secret != nil {
 					volume.Secret.SecretName = runner.Spec.ConfigSecretRef.Name
 					foundVolume = true
 				}
