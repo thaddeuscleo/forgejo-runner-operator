@@ -42,6 +42,11 @@ privileges or be logged in as admin.
 You can apply the samples (examples) from the config/sample:
 
 ```sh
+kubectl -n ci-runner create secret generic forgejo-runner-config \
+  --from-file=runner-config.yml=./runner-config.yaml
+```
+
+```sh
 kubectl apply -k config/samples/
 ```
 

@@ -31,7 +31,7 @@ type ForgejoRunnerSpec struct {
 }
 
 type ForgejoRunnerStatus struct {
-	ObservedGeneration int64 `json:"observeGeneration,omitempty"`
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 	ReadyReplicas      int32 `json:"readyReplicas,omitempty"`
 
 	// +listType=map

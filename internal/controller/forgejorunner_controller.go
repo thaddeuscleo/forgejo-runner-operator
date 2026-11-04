@@ -28,11 +28,14 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	civ1alpha1 "codeberg.org/thaddeuscleo/forgejo-runner-operator/api/v1alpha1"
 )
@@ -46,6 +49,7 @@ type ForgejoRunnerReconciler struct {
 // +kubebuilder:rbac:groups=ci.cleoverse.net,resources=forgejorunners,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ci.cleoverse.net,resources=forgejorunners/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ci.cleoverse.net,resources=forgejorunners/finalizers,verbs=update
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
 func (r *ForgejoRunnerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -65,6 +69,7 @@ func (r *ForgejoRunnerReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	var secret corev1.Secret
+
 	ge := r.Get(
 		ctx,
 		client.ObjectKey{
@@ -75,8 +80,20 @@ func (r *ForgejoRunnerReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	)
 
 	if apierrors.IsNotFound(ge) {
-		// Set Ready=False, reason=SecretNotFound.
-		// Requeue after a short interval.
+		ge = r.setReadyCondition(
+			ctx,
+			&runner,
+			metav1.ConditionFalse,
+			"SecretNotFound",
+			fmt.Sprintf(
+				"Referenced Secret %q does not exist",
+				runner.Spec.ConfigSecretRef.Name,
+			),
+		)
+		if ge != nil {
+			return ctrl.Result{}, ge
+		}
+
 		return ctrl.Result{
 			RequeueAfter: 10 * time.Second,
 		}, nil
@@ -86,9 +103,18 @@ func (r *ForgejoRunnerReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, ge
 	}
 
-	if _, ok := secret.Data["runner-config.yml"]; !ok {
-		// Set Ready=False, reason=InvalidSecret.
-		// Requeue or watch for Secret changes.
+	if len(secret.Data["runner-config.yml"]) == 0 {
+		ge = r.setReadyCondition(
+			ctx,
+			&runner,
+			metav1.ConditionFalse,
+			"InvalidSecret",
+			"Secret must contain a non-empty runner-config.yml",
+		)
+		if ge != nil {
+			return ctrl.Result{}, ge
+		}
+
 		return ctrl.Result{
 			RequeueAfter: 10 * time.Second,
 		}, nil
@@ -188,10 +214,88 @@ func (r *ForgejoRunnerReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return ctrl.Result{}, nil
 }
 
+func (r *ForgejoRunnerReconciler) setReadyCondition(
+	ctx context.Context,
+	runner *civ1alpha1.ForgejoRunner,
+	status metav1.ConditionStatus,
+	reason string,
+	message string,
+) error {
+	before := runner.DeepCopy()
+
+	runner.Status.ObservedGeneration = runner.Generation
+
+	meta.SetStatusCondition(
+		&runner.Status.Conditions,
+		metav1.Condition{
+			Type:               "Ready",
+			Status:             status,
+			Reason:             reason,
+			Message:            message,
+			ObservedGeneration: runner.Generation,
+		},
+	)
+
+	if reflect.DeepEqual(before.Status, runner.Status) {
+		return nil
+	}
+
+	return r.Status().Patch(
+		ctx,
+		runner,
+		client.MergeFrom(before),
+	)
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *ForgejoRunnerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&civ1alpha1.ForgejoRunner{}).
+		Owns(&appsv1.Deployment{}).
+		Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(
+				r.mapSecretToRunners,
+			),
+		).
 		Named("forgejorunner").
 		Complete(r)
+
+}
+
+func (r *ForgejoRunnerReconciler) mapSecretToRunners(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	var runners civ1alpha1.ForgejoRunnerList
+
+	err := r.List(
+		ctx,
+		&runners,
+		client.InNamespace(obj.GetNamespace()),
+	)
+	if err != nil {
+		logf.FromContext(ctx).Error(
+			err,
+			"Failed to list ForgejoRunners",
+		)
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0)
+
+	for _, runner := range runners.Items {
+		if runner.Spec.ConfigSecretRef.Name != obj.GetName() {
+			continue
+		}
+
+		requests = append(requests, reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      runner.Name,
+				Namespace: runner.Namespace,
+			},
+		})
+	}
+
+	return requests
 }
