@@ -1,8 +1,8 @@
 # forgejo-runner-operator
-// TODO(user): Add simple overview of use/purpose
+Operator for managing forgejo runner
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+This repo will focus on providing ease and flexibility for deploying forgejo runner. Currently the runner have no official kubernetes operator implementation. This project hopefully can bridge the gap for the community who looking forward to deploy forgejo using CRDS and having cetralized statuses for tracking the deployed forgejo runner resources. 
 
 ## Getting Started
 
@@ -132,4 +132,3 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-
