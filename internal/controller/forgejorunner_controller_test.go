@@ -215,4 +215,109 @@ var _ = Describe("ForgejoRunner Controller", func() {
 			current.Status.Conditions, "Ready",
 		)).To(BeTrue())
 	})
+
+	It("does not update Deployment when desired state is unchanged", func() {
+		// Arrange: Create dependency and reconcile once.
+		createSecret()
+		reconcileOnce()
+
+		var before appsv1.Deployment
+		Expect(k8sClient.Get(ctx, key, &before)).To(Succeed())
+
+		originalVersion := before.ResourceVersion
+		originalGeneration := before.Generation
+
+		// Act: Run reconciliation repeatedly.
+		for range 5 {
+			reconcileOnce()
+		}
+
+		// Assert: Deployment was not modified.
+		var after appsv1.Deployment
+		Expect(k8sClient.Get(ctx, key, &after)).To(Succeed())
+
+		Expect(after.ResourceVersion).
+			To(Equal(originalVersion))
+
+		Expect(after.Generation).
+			To(Equal(originalGeneration))
+
+		Expect(after.Spec).
+			To(Equal(before.Spec))
+	})
+
+	It("does not adopt an unrelated Deployment", func() {
+		createSecret()
+
+		// Arrange: A Deployment already exists
+		// with the same name as ForgejoRunner.
+		replicas := int32(2)
+
+		labels := map[string]string{
+			"app": "unrelated",
+		}
+
+		foreignDeployment := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      key.Name,
+				Namespace: key.Namespace,
+				Labels:    labels,
+			},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: &replicas,
+				Selector: &metav1.LabelSelector{
+					MatchLabels: labels,
+				},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: labels,
+					},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name:  "unrelated-app",
+								Image: "nginx:latest",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		Expect(k8sClient.Create(
+			ctx, foreignDeployment,
+		)).To(Succeed())
+
+		var before appsv1.Deployment
+		Expect(k8sClient.Get(ctx, key, &before)).
+			To(Succeed())
+
+		// Act: Attempt to reconcile ForgejoRunner.
+		_, err := reconciler.Reconcile(
+			ctx,
+			ctrl.Request{
+				NamespacedName: key,
+			},
+		)
+
+		// Assert: Reconciliation must fail.
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring(
+			"not controlled by ForgejoRunner",
+		))
+
+		// Assert: Unrelated Deployment remains intact.
+		var after appsv1.Deployment
+		Expect(k8sClient.Get(ctx, key, &after)).
+			To(Succeed())
+
+		Expect(after.ResourceVersion).
+			To(Equal(before.ResourceVersion))
+
+		Expect(after.Spec).
+			To(Equal(before.Spec))
+
+		Expect(after.OwnerReferences).
+			To(BeEmpty())
+	})
 })
